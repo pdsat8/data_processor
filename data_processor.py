@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-# %%
+
 # vars
 # file path
 PATH_CSV_FILE = r"C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).csv"
@@ -75,8 +75,8 @@ LIST_BASIC_COLUMN = [
 # self.key_intcols_list = [
 #     'operatingmode_cntmax', 'operatingmode_cntmaxcnt', 'yawmode_cntmax', 'yawmode_cntmaxcnt', 'limitmode_cntmax', 'limitmode_cntmaxcnt', 'brakemode_cntmax', 'brakemode_cnt' # 运行模式，偏航模式和限电模式的最大出现次数及其次数
 # ]
-# %%
-def csv2parquet(df=None):
+
+def csv2parquet(df:pd.DataFrame=None):
     # read .csv and covert to .parques
 
     if df is None:
@@ -98,8 +98,8 @@ def csv2parquet(df=None):
 
     return df
 
-def rename_columns_in_parquet_and_save(df=None, 
-                            dict_column_mapping=None
+def rename_columns_in_parquet_and_save(df:pd.DataFrame=None, 
+                            dict_column_mapping:dict=None
                             ):
     # rename columns by inputs columns name mapper dict or self.column_mapping_dict
     
@@ -108,7 +108,6 @@ def rename_columns_in_parquet_and_save(df=None,
     if dict_column_mapping is None:
         dict_column_mapping = DICT_COLUMN_MAPPING
 
-    # change columns name
     df.rename(columns=dict_column_mapping, inplace=True)            
 
     df.to_parquet(PATH_PARQUET_FILE)
@@ -116,31 +115,35 @@ def rename_columns_in_parquet_and_save(df=None,
 
     return df
 
-def sort_values_and_save(df=None, ascending=True):
+def sort_values_and_save(df:pd.DataFrame=None, 
+                         ascending:bool=True
+                         ):
     
     if df is None:
         df = pd.read_parquet(PATH_PARQUET_FILE)   
-    df.sort_values(['turbine_id', 'time'], ascending=ascending) 
+    df = df.sort_values(['turbine_id', 'time'], ascending=ascending)
+    df = df.reset_index(drop=False)
     df.to_parquet(PATH_PARQUET_FILE)
     print(f"Data sorted and saved to {PATH_PARQUET_FILE}")
     return df
     
-def timeseria_check(self, 
-        df: pd.DataFrame, 
-        time_interval: int = 60, 
+def timeseria_check(df: pd.DataFrame = None, 
+        time_interval: int = 60
         ):
     # time seria continuety check, return check report data
+
+    if df is None:
+        df = pd.read_parquet(PATH_PARQUET_FILE)
     if time_interval is None:
         time_interval = self.time_interval
 
-    # create time seria problem data dict
     timeseria_problem_data_dict = {}
 
-    # time seria sort order by turbine_id
-    df = df.sort_values(['turbine_id', 'time'])
+    if not df[['turbine_id', 'time']].equals(df[['turbine_id', 'time']].sort_values(['turbine_id', 'time'])):
+        df = df.sort_values(['turbine_id', 'time'])
 
-    # 'turbine_id' or 'time' column value is NaN
-    df['label_idtime_null'] = df['turbine_id'].isnull() | df['time'].isnull()
+    # 'turbine_id' and 'time' combine null type
+    df['label_idtime_null'] = df['turbine_id'].isnull() | df['time'].isnull()   # 0: no NaN; 1: contain NaN
     timeseria_problem_data_dict['idtime_nan_data'] = df[df['label_idtime_null']]
 
     # 'turbine_id' and 'time' combine duplicate type
@@ -154,11 +157,11 @@ def timeseria_check(self,
         is_idtime_duplicated_notfirst_seria, 
     ]
     # 'turbine_id' and 'time' combine duplicate label list
-    label_idtime_duplicated_choices = [0, 1, 2]
-    # 3 types of duplicate：
-    # 0: no duplicate
-    # 1: duplicate and first
-    # 2: duplicate but not first
+    label_idtime_duplicated_choices = [0,   # 0: no duplicate
+                                       1,   # duplicate but first
+                                       2    # 2: duplicate and not first
+                                       ]
+    
     # 'turbine_id' and 'time' combine mapping duplicate condiction and duplicate label
     df['label_idtime_duplicated'] = np.select(
         label_idtime_duplicated_conditions,
@@ -169,9 +172,9 @@ def timeseria_check(self,
     timeseria_problem_data_dict['idtime_duplicated_data'] = df[df['label_idtime_duplicated'] != 0]
     
     # sign time interval >= time_interval data
-    df.loc[:, 'time_interval'] = df.groupby('turbine_id')['time'].transform(lambda x: (x - x.shift()).fillna(pd.Timedelta(seconds=0)))
+    df['time_interval'] = df.groupby('turbine_id')['time'].transform(lambda x: (x - x.shift()).fillna(pd.Timedelta(seconds=0)))
     # label the continuty data
-    df.loc[:, 'label_continuous'] = ((df['time_interval'] == pd.Timedelta(seconds=time_interval)) | (df['time_interval'] == pd.Timedelta(seconds=0)))
+    df['label_continuous'] = ((df['time_interval'] == pd.Timedelta(seconds=time_interval)) | (df['time_interval'] == pd.Timedelta(seconds=0)))   # 0: not continuety; 1: continuety
     # create not continue data
     df_notcontinuity_data = df.loc[(~df['label_continuous']), ['turbine_id', 'time', 'time_interval']]
     df_notcontinuity_data['start_time'] = df_notcontinuity_data['time'] - df_notcontinuity_data['time_interval']
@@ -181,10 +184,11 @@ def timeseria_check(self,
     # Remove the 'time_interval' column
     df.drop(columns=['time_interval'], inplace=True)
     
+    df = pa.Table.from_pandas(df)
+    df = df.to_pandas(types_mapper=pd.ArrowDtype)
     return df, timeseria_problem_data_dict
 
 # todo: fix from this part
-
 def label_outliers(self, 
         df: pd.DataFrame, 
         col_float : list = None, 
