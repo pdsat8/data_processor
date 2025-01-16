@@ -99,8 +99,7 @@ def csv2parquet(df:pd.DataFrame=None,
         df[COLUMN_TIME] = pd.to_datetime(df[COLUMN_TIME])
 
     df = pa.Table.from_pandas(df)
-    df = df.to_pandas(types_mapper=pd.ArrowDtype) # this line might be not necessary, make sure time type convert to pyarrow time type
-
+    df = df.to_pandas(types_mapper=pd.ArrowDtype) 
 
     df.to_parquet(path_save_file)
     print(f"Data has been converted and saved to {path_save_file}")
@@ -156,6 +155,10 @@ def sort_values_and_save(df:pd.DataFrame=None,
     df = df.sort_values(sort_column_list, ascending=ascending)
 
     df = df.reset_index(drop=False)
+
+    # this line might be not necessary, make sure all types convert to pyarrow types
+    df = pa.Table.from_pandas(df)
+    df = df.to_pandas(types_mapper=pd.ArrowDtype)
 
     df.to_parquet(path_save_file)
     print(f"Data sorted and saved to {path_save_file}")
@@ -220,6 +223,7 @@ def label_timeseria_type(df: pd.DataFrame = None,
     # Remove the 'time_interval' column
     df.drop(columns=['time_interval'], inplace=True)
     
+    # this line might be not necessary, make sure all types convert to pyarrow types
     df = pa.Table.from_pandas(df)
     df = df.to_pandas(types_mapper=pd.ArrowDtype)
     return df, timeseria_problem_data_dict
