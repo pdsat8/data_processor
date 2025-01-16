@@ -133,7 +133,7 @@ def rename_columns_in_parquet_and_save(df:pd.DataFrame=None,
     return df
 
 def sort_values_and_save(df:pd.DataFrame=None, 
-                         sort_column_list:list=['turbine_id', 'time'], 
+                         list_sort_column:list=['turbine_id', 'time'], 
                          ascending:bool=True, 
                          path_save_file:path=PATH_PARQUET_FILE
                          ) -> pd.DataFrame:
@@ -142,7 +142,7 @@ def sort_values_and_save(df:pd.DataFrame=None,
 
     Args:
         df (pd.DataFrame, optional): Sort data. Defaults to None.
-        sort_column_list (list, optional): Sort columns. Defaults to ['turbine_id', 'time'].
+        list_sort_column (list, optional): Sort columns. Defaults to ['turbine_id', 'time'].
         ascending (bool, optional): Ascending type. Defaults to True.
         path_save_file (path, optional): Save file path. Defaults to PATH_PARQUET_FILE.
 
@@ -152,7 +152,7 @@ def sort_values_and_save(df:pd.DataFrame=None,
     if df is None:
         df = pd.read_parquet(PATH_PARQUET_FILE)   
 
-    df = df.sort_values(sort_column_list, ascending=ascending)
+    df = df.sort_values(list_sort_column, ascending=ascending)
 
     df = df.reset_index(drop=False)
 
@@ -165,16 +165,22 @@ def sort_values_and_save(df:pd.DataFrame=None,
 
     return df
     
-# todo: fix from this part
-def label_timeseria_type(df: pd.DataFrame = None, 
-        time_interval: int = 60
-        ):
-    # time seria continuety check, return check report data
+def label_timeseria_type(df:pd.DataFrame=None, 
+        time_interval:int=60
+        ) -> pd.DataFrame:
+    """
+    Label time seria type
+
+    Args:
+        df (pd.DataFrame, optional): Data to label time seria type. Defaults to None.
+        time_interval (int, optional): Time seria interval. Defaults to 60s.
+
+    Returns:
+        pd.DataFrame: Labeled time seria type data
+    """
 
     if df is None:
         df = pd.read_parquet(PATH_PARQUET_FILE)
-    if time_interval is None:
-        time_interval = self.time_interval
 
     timeseria_problem_data_dict = {}
 
@@ -219,15 +225,18 @@ def label_timeseria_type(df: pd.DataFrame = None,
     df_notcontinuity_data['start_time'] = df_notcontinuity_data['time'] - df_notcontinuity_data['time_interval']
     # record not continue data
     timeseria_problem_data_dict['idtime_notcontinuity_data'] = df_notcontinuity_data
-    
+    print(timeseria_problem_data_dict)
+
     # Remove the 'time_interval' column
     df.drop(columns=['time_interval'], inplace=True)
     
     # this line might be not necessary, make sure all types convert to pyarrow types
     df = pa.Table.from_pandas(df)
     df = df.to_pandas(types_mapper=pd.ArrowDtype)
-    return df, timeseria_problem_data_dict
 
+    return df
+
+# todo: fix from this part
 def label_outliers(self, 
         df:pd.DataFrame=None, 
         col_float:list=None, 
