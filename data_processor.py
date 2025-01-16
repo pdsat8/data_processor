@@ -2,8 +2,7 @@
 import pandas as pd
 import numpy as np
 import pyarrow as pa
-import pyarrow.parquet as pq
-
+import pathlib as path
 # vars
 # file path
 PATH_CSV_FILE = r"C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).csv"
@@ -76,58 +75,95 @@ LIST_BASIC_COLUMN = [
 #     'operatingmode_cntmax', 'operatingmode_cntmaxcnt', 'yawmode_cntmax', 'yawmode_cntmaxcnt', 'limitmode_cntmax', 'limitmode_cntmaxcnt', 'brakemode_cntmax', 'brakemode_cnt' # 运行模式，偏航模式和限电模式的最大出现次数及其次数
 # ]
 
-def csv2parquet(df:pd.DataFrame=None):
-    # read .csv and covert to .parques
+def csv2parquet(df:pd.DataFrame=None, 
+                path_csv_file:path=PATH_CSV_FILE, 
+                path_save_file:path=PATH_PARQUET_FILE
+                ) -> pd.DataFrame: 
+    """
+    Read .csv data and covert to .parques data
+
+    Args:
+        df (pd.DataFrame, optional): If DataFrame data exist, convert it to .parquet. Defaults to None.
+        path_csv_file (path, optional): .csv file to convert. Defaults to PATH_CSV_FILE.
+        path_save_file (path, optional): Save file path. Defaults to PATH_PARQUET_FILE.
+
+    Returns:
+        pd.DataFrame: PyArrow DataFrame
+    """
 
     if df is None:
-        df = pd.read_csv(PATH_CSV_FILE)
-
+        df = pd.read_csv(path_csv_file)
     print(df.dtypes)
+
     if not pd.api.types.is_datetime64_any_dtype(df[COLUMN_TIME]):
-        try:
-            df[COLUMN_TIME] = pd.to_datetime(df[COLUMN_TIME])
-        except Exception as e:
-            print(f"Time column transform fail: {str(e)}")
-            raise
+        df[COLUMN_TIME] = pd.to_datetime(df[COLUMN_TIME])
 
     df = pa.Table.from_pandas(df)
     df = df.to_pandas(types_mapper=pd.ArrowDtype) # this line might be not necessary, make sure time type convert to pyarrow time type
 
-    df.to_parquet(PATH_PARQUET_FILE)
-    print(f"Data has been converted and saved to {PATH_PARQUET_FILE}")
+
+    df.to_parquet(path_save_file)
+    print(f"Data has been converted and saved to {path_save_file}")
 
     return df
 
 def rename_columns_in_parquet_and_save(df:pd.DataFrame=None, 
-                            dict_column_mapping:dict=None
-                            ):
-    # rename columns by inputs columns name mapper dict or self.column_mapping_dict
+                            dict_column_mapping:dict=DICT_COLUMN_MAPPING, 
+                            path_save_file:path=PATH_PARQUET_FILE
+                            ) -> pd.DataFrame:
+    """
+    Rename columns by inputs columns name mapper dict or default
+
+    Args:
+        df (pd.DataFrame, optional): Rename data. Defaults to None.
+        dict_column_mapping (dict, optional): Rename mapping dict. Defaults to DICT_COLUMN_MAPPING.
+        path_save_file (path, optional): Save file path. Defaults to PATH_PARQUET_FILE.
+
+    Returns:
+        pd.DataFrame: Renamed data
+    """
     
     if df is None:
         df = pd.read_parquet(PATH_PARQUET_FILE)    
-    if dict_column_mapping is None:
-        dict_column_mapping = DICT_COLUMN_MAPPING
 
     df.rename(columns=dict_column_mapping, inplace=True)            
 
-    df.to_parquet(PATH_PARQUET_FILE)
-    print(f"Columns have been renamed and the file has been saved to {PATH_PARQUET_FILE}")
+    df.to_parquet(path_save_file)
+    print(f"Columns have been renamed and the file has been saved to {path_save_file}")
 
     return df
 
 def sort_values_and_save(df:pd.DataFrame=None, 
-                         ascending:bool=True
-                         ):
-    
+                         sort_column_list:list=['turbine_id', 'time'], 
+                         ascending:bool=True, 
+                         path_save_file:path=PATH_PARQUET_FILE
+                         ) -> pd.DataFrame:
+    """
+    Sort values and save data
+
+    Args:
+        df (pd.DataFrame, optional): Sort data. Defaults to None.
+        sort_column_list (list, optional): Sort columns. Defaults to ['turbine_id', 'time'].
+        ascending (bool, optional): Ascending type. Defaults to True.
+        path_save_file (path, optional): Save file path. Defaults to PATH_PARQUET_FILE.
+
+    Returns:
+        pd.DataFrame: Sorted data
+    """
     if df is None:
         df = pd.read_parquet(PATH_PARQUET_FILE)   
-    df = df.sort_values(['turbine_id', 'time'], ascending=ascending)
+
+    df = df.sort_values(sort_column_list, ascending=ascending)
+
     df = df.reset_index(drop=False)
-    df.to_parquet(PATH_PARQUET_FILE)
-    print(f"Data sorted and saved to {PATH_PARQUET_FILE}")
+
+    df.to_parquet(path_save_file)
+    print(f"Data sorted and saved to {path_save_file}")
+
     return df
     
-def timeseria_check(df: pd.DataFrame = None, 
+# todo: fix from this part
+def label_timeseria_type(df: pd.DataFrame = None, 
         time_interval: int = 60
         ):
     # time seria continuety check, return check report data
@@ -188,19 +224,18 @@ def timeseria_check(df: pd.DataFrame = None,
     df = df.to_pandas(types_mapper=pd.ArrowDtype)
     return df, timeseria_problem_data_dict
 
-# todo: fix from this part
 def label_outliers(self, 
-        df: pd.DataFrame, 
-        col_float : list = None, 
-        continuety_num = 3, 
+        df:pd.DataFrame=None, 
+        col_float:list=None, 
+        continuety_num=3, 
         ):
     
     if col_float is None:
-        col_float = self.basic_cols_list
+        col_float = LIST_BASIC_COLUMN
 
     outlier_problem_dict = {}
     
-    # Label rows based on the type of NaN values.
+    # Label rows based on the type of NaN values
     num_col_list = df.drop(columns=['time','turbine_id']).columns.tolist()
     
     # 3 types of NaN values:
