@@ -297,7 +297,6 @@ def label_outliers_type(df:pd.DataFrame=None,
     #                 lambda x: ((x.shift((continuety_num - 1)) == 1) | (x == 1)))
     # df_continue_duplicate_problem.columns = ["continue_duplicate_type_" + col for col in df_continue_duplicate_problem.columns]
     # df_continue_duplicate_problem.index = df_continue_duplicate_problem.index.get_level_values(1)
-
     # outlier_problem_dict['continue_duplicate_problem'] = df_continue_duplicate_problem
     
     # Label rows with out-of-range wind speed.
@@ -305,7 +304,7 @@ def label_outliers_type(df:pd.DataFrame=None,
     
     print(outlier_problem_dict)
 
-    df = pd.concat([df, df_continue_duplicate_problem], axis=1)
+    # df = pd.concat([df, df_continue_duplicate_problem], axis=1)
 
     # this line might be not necessary, make sure all types convert to pyarrow types
     df = pa.Table.from_pandas(df)
