@@ -3,6 +3,10 @@ import pandas as pd
 import numpy as np
 import pyarrow as pa
 import pathlib as path
+
+# from pandarallel import pandarallel
+# pandarallel.initialize(progress_bar=True)
+
 # vars
 # file path
 PATH_CSV_FILE = r"C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).csv"
@@ -206,30 +210,31 @@ def label_timeseria_type(df:pd.DataFrame=None,
                                        1,   # duplicate but first
                                        2    # 2: duplicate and not first
                                        ]
-    
     # 'turbine_id' and 'time' combine mapping duplicate condiction and duplicate label
     df['label_idtime_duplicated'] = np.select(
         label_idtime_duplicated_conditions,
         label_idtime_duplicated_choices,
         default=0,
     )
-    # record 'turbine_id' and 'time' combine duplicate data
     timeseria_problem_data_dict['idtime_duplicated_data'] = df[df['label_idtime_duplicated'] != 0]
     
+    # 'turbine_id' and 'time' combine continuety type
     # sign time interval >= time_interval data
     df['time_interval'] = df.groupby('turbine_id')['time'].transform(lambda x: (x - x.shift()).fillna(pd.Timedelta(seconds=0)))
-    # label the continuty data
-    df['label_continuous'] = ((df['time_interval'] == pd.Timedelta(seconds=time_interval)) | (df['time_interval'] == pd.Timedelta(seconds=0)))   # 0: not continuety; 1: continuety
+    # label the continuety type
+    df['label_idtime_continuous_type'] = ((df['time_interval'] != pd.Timedelta(seconds=time_interval)) & (df['time_interval'] != pd.Timedelta(seconds=0)))   # 0: continuety; 1: not continuety
     # create not continue data
-    df_notcontinuity_data = df.loc[(~df['label_continuous']), ['turbine_id', 'time', 'time_interval']]
+    df_notcontinuity_data = df.loc[(df['label_idtime_continuous_type']), ['turbine_id', 'time', 'time_interval']]
     df_notcontinuity_data['start_time'] = df_notcontinuity_data['time'] - df_notcontinuity_data['time_interval']
     # record not continue data
     timeseria_problem_data_dict['idtime_notcontinuity_data'] = df_notcontinuity_data
+
     print(timeseria_problem_data_dict)
 
-    # Remove the 'time_interval' column
     df.drop(columns=['time_interval'], inplace=True)
     
+    df['label_idtime_null'] = df['label_idtime_null'].astype(int)   # Convert True/False to 1/0
+    df['label_idtime_continuous_type'] = df['label_idtime_continuous_type'].astype(int)  # Convert True/False to 1/0
     # this line might be not necessary, make sure all types convert to pyarrow types
     df = pa.Table.from_pandas(df)
     df = df.to_pandas(types_mapper=pd.ArrowDtype)
@@ -237,70 +242,76 @@ def label_timeseria_type(df:pd.DataFrame=None,
     return df
 
 # todo: fix from this part
-def label_outliers(self, 
-        df:pd.DataFrame=None, 
-        col_float:list=None, 
-        continuety_num=3, 
-        ):
-    
-    if col_float is None:
-        col_float = LIST_BASIC_COLUMN
+def label_outliers_type(df:pd.DataFrame=None, 
+        column_float_type:list=LIST_BASIC_COLUMN, 
+        continuety_num:int=3, 
+        ) -> pd.DataFrame:
+    """
+    Label outliers type
+
+    Args:
+        df (pd.DataFrame, optional): Data to label outliers type. Defaults to None.
+        column_float_type (list, optional): Float type column list. Defaults to LIST_BASIC_COLUMN.
+        continuety_num (int, optional): Value continuety occur times. Defaults to 3.
+
+    Returns:
+        pd.DataFrame: Data with labeled outliers type
+    """
+
+    if df is None:
+        df = pd.read_parquet(PATH_PARQUET_FILE)
 
     outlier_problem_dict = {}
     
     # Label rows based on the type of NaN values
     num_col_list = df.drop(columns=['time','turbine_id']).columns.tolist()
-    
-    # 3 types of NaN values:
-    # 0: No NaN values
-    # 1: Some NaN values but not all
-    # 2: All values are NaN
+
     is_null_seria = df[num_col_list].isnull().any(axis=1)
     is_littlenull_seria = df[num_col_list].isnull().any(axis=1) & (~df[num_col_list].isnull().all(axis=1))
     is_allnull_seria = df[num_col_list].isnull().all(axis=1)
     label_nan_conditions = [
-        ~is_null_seria,
-        is_littlenull_seria,
-        is_allnull_seria,
+        ~is_null_seria,         # 0: No NaN values
+        is_littlenull_seria,    # 1: Some NaN values but not all
+        is_allnull_seria,       # 2: All values are NaN
     ]
     label_nan_choices = [0, 1, 2]
-    # The field name for NaN type is 'label_NaN'.
-    df['label_NaN'] = np.select(
+    df['label_NaN_type'] = np.select(
         label_nan_conditions,
         label_nan_choices,
         default=0,
     )
-
-    outlier_problem_dict['NaN_data'] = df[df['label_NaN'] != 0]
+    outlier_problem_dict['NaN_data'] = df[df['label_NaN_type'] != 0]
     
-    
-    """
-    Label rows with repeated values in continuous time series.
-    24.8.6 Repeated values need to be confirmed with data collection to determine data change frequency
-    """
-    col_float_set = set(df.columns) & set(col_float)
+    # todo: Pandarallel is not satisfy with def, change it
+    # """
+    # Label rows with repeated values in continuous time series.
+    # 24.8.6 Repeated values need to be confirmed with data collection to determine data change frequency
+    # """
+    # col_float_set = set(df.columns) & set(column_float_type)
+    # condiction_idtime_notnull = (df['label_idtime_null'] == 0)
+    # condiction_idtime_notduplicated = (df['label_idtime_duplicated'] != 2)
+    # df_timeseria_filtered = df[condiction_idtime_notnull & condiction_idtime_notduplicated].sort_values(['turbine_id', 'time'])
+    # df_continue_duplicate_problem = df_timeseria_filtered.groupby('turbine_id')[list(col_float_set)].rolling(window=continuety_num, min_periods=continuety_num).parallel_apply(
+    #         lambda y: len(set(y)) == 1).shift(
+    #             -(continuety_num - 1)).transform(
+    #                 lambda x: ((x.shift((continuety_num - 1)) == 1) | (x == 1)))
+    # df_continue_duplicate_problem.columns = ["continue_duplicate_type_" + col for col in df_continue_duplicate_problem.columns]
+    # df_continue_duplicate_problem.index = df_continue_duplicate_problem.index.get_level_values(1)
 
-    condiction_timenotnull = df['label_idtime_null'] == 0
-    condiction_timenotduplicated = df['label_idtime_duplicated'] != 2
-    df_timeseria_filtered = df[condiction_timenotnull & condiction_timenotduplicated].sort_values(['turbine_id', 'time'])
-    
-    df_continue_problem = df_timeseria_filtered.groupby('turbine_id')[list(col_float_set)].rolling(window=continuety_num, min_periods=continuety_num).parallel_apply(
-            lambda y: len(set(y)) == 1).shift(
-                -(continuety_num - 1)).transform(
-                    lambda x: ((x.shift((continuety_num - 1)) == 1) | (x == 1)))
-    df_continue_problem.columns = [col + "_cp" for col in df_continue_problem.columns]
-    df_continue_problem.index = df_continue_problem.index.get_level_values(1)
-
-    outlier_problem_dict['continue_problem'] = df_continue_problem
+    # outlier_problem_dict['continue_duplicate_problem'] = df_continue_duplicate_problem
     
     # Label rows with out-of-range wind speed.
     overrange_windspeed = (df['windspeed_avg'] >= 30) | (df['windspeed_avg'] < 0)
     
-    # print("Outlier problem dict: \n", outlier_problem_dict)
+    print(outlier_problem_dict)
 
-    df_outlierlabel = pd.concat([df['label_NaN'], df_continue_problem], axis=1)
+    df = pd.concat([df, df_continue_duplicate_problem], axis=1)
+
+    # this line might be not necessary, make sure all types convert to pyarrow types
+    df = pa.Table.from_pandas(df)
+    df = df.to_pandas(types_mapper=pd.ArrowDtype)
     
-    return df_outlierlabel, outlier_problem_dict
+    return df
 
 def label_situations(df: pd.DataFrame,
     rated_power: int =2100,
