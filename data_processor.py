@@ -7,11 +7,11 @@ import pathlib as path
 # from pandarallel import pandarallel
 # pandarallel.initialize(progress_bar=True)
 
-# vars
-# file path
+# Vars
+# File Path
 PATH_CSV_FILE = r"C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).csv"
 PATH_PARQUET_FILE = r"C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).parquet"
-# column mapping, should be depand on original data columns
+# Column mapping, should be depand on original data columns
 DICT_COLUMN_MAPPING = {
     'rectime': 'time',  # imoprtant var, change it necessary
     'turbid': 'turbine_id', 
@@ -24,7 +24,7 @@ DICT_COLUMN_MAPPING = {
     'iairdensity_avg': 'airdensity_avg', 
     'inacellepositionltd_avg': 'yawposition_avg', 
 }
-# time column name
+# Time column name
 COLUMN_TIME = 'rectime'    # should be repalce by original data time clomun name if wanna change time type to pyarrow time type
 # analysis reley on basic columns
 LIST_BASIC_COLUMN = [
@@ -51,6 +51,9 @@ LIST_BASIC_COLUMN = [
     'brakemode_cntmax',
     # 'brakemode_cnt'# 运行模式、偏航模式和刹车模式的最大出现次数及其次数
 ]
+# Rated power
+RATED_POWER = 2100
+
 ## key columns might be not necessary
 ## analysis reley on key columns
 # self.key_cols_list = [
@@ -241,9 +244,8 @@ def label_timeseria_type(df:pd.DataFrame=None,
 
     return df
 
-# todo: fix from this part
 def label_outliers_type(df:pd.DataFrame=None, 
-        column_float_type:list=LIST_BASIC_COLUMN, 
+        column_float_type:list=['windspeed_avg', 'winddirection_avg'], 
         continuety_num:int=3, 
         ) -> pd.DataFrame:
     """
@@ -283,14 +285,19 @@ def label_outliers_type(df:pd.DataFrame=None,
     outlier_problem_dict['NaN_data'] = df[df['label_NaN_type'] != 0]
     
     # todo: Pandarallel is not satisfy with def, change it
-    # """
-    # Label rows with repeated values in continuous time series.
-    # 24.8.6 Repeated values need to be confirmed with data collection to determine data change frequency
-    # """
-    # col_float_set = set(df.columns) & set(column_float_type)
-    # condiction_idtime_notnull = (df['label_idtime_null'] == 0)
-    # condiction_idtime_notduplicated = (df['label_idtime_duplicated'] != 2)
-    # df_timeseria_filtered = df[condiction_idtime_notnull & condiction_idtime_notduplicated].sort_values(['turbine_id', 'time'])
+    """
+    Label rows with repeated values in continuous time series.
+    24.8.6 Repeated values need to be confirmed with data collection to determine data change frequency
+    """
+    col_float_set = set(df.columns) & set(column_float_type)
+    condiction_idtime_notnull = (df['label_idtime_null'] == 0)
+    condiction_idtime_notduplicated = (df['label_idtime_duplicated'] != 2)
+    df_timeseria_filtered = df[condiction_idtime_notnull & condiction_idtime_notduplicated].sort_values(['turbine_id', 'time'])
+    for i in col_float_set:
+        df['continue_duplicate_type_' + i] = (df[i] == df[i].shift(-1)) & (df[i] == df[i].shift(-2))    
+        df.loc[df['continue_duplicate_type_' + i] == True, 'continue_duplicate_type_' + i].shift(1) == True
+        df.loc[df['continue_duplicate_type_' + i] == True, 'continue_duplicate_type_' + i].shift(2) == True
+        df.loc[df['continue_duplicate_type_' + i] == None, 'continue_duplicate_type_' + i] == False
     # df_continue_duplicate_problem = df_timeseria_filtered.groupby('turbine_id')[list(col_float_set)].rolling(window=continuety_num, min_periods=continuety_num).parallel_apply(
     #         lambda y: len(set(y)) == 1).shift(
     #             -(continuety_num - 1)).transform(
@@ -298,11 +305,12 @@ def label_outliers_type(df:pd.DataFrame=None,
     # df_continue_duplicate_problem.columns = ["continue_duplicate_type_" + col for col in df_continue_duplicate_problem.columns]
     # df_continue_duplicate_problem.index = df_continue_duplicate_problem.index.get_level_values(1)
     # outlier_problem_dict['continue_duplicate_problem'] = df_continue_duplicate_problem
-    
+
+    # todo: get every measure value solid
     # Label rows with out-of-range wind speed.
     overrange_windspeed = (df['windspeed_avg'] >= 30) | (df['windspeed_avg'] < 0)
     
-    print(outlier_problem_dict)
+    # print(outlier_problem_dict)
 
     # df = pd.concat([df, df_continue_duplicate_problem], axis=1)
 
@@ -312,10 +320,11 @@ def label_outliers_type(df:pd.DataFrame=None,
     
     return df
 
+# todo: fix from this part
 def label_situations(df: pd.DataFrame,
-    rated_power: int =2100,
-    pitch_limit: int =4,
-) -> tuple[pd.DataFrame, dict]:
+    rated_power:int=RATED_POWER,
+    pitch_limit:int=4,
+) -> pd.DataFrame:
     """
     打特殊工况标签。
     24.8.12 调频限电目前没有限电标志位，
@@ -355,7 +364,7 @@ def label_situations(df: pd.DataFrame,
         
     print("工况字典: \n", situation_dict)
     
-    return df['label_condiction_limited'], situation_dict
+    return df
 
 def label_operation(df: pd.DataFrame) -> pd.Series:
     """
@@ -640,3 +649,7 @@ def calculate_weight_power(
 
     return df_weight_power
 # %%
+
+def test(path=PATH_PARQUET_FILE):
+    df = pd.read_parquet(path)
+    return df
