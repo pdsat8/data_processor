@@ -2,8 +2,10 @@
 import pandas as pd
 import numpy as np
 import pyarrow as pa
+import pyarrow.csv as pv_csv
+import pyarrow.parquet as pq
 import pathlib as path
-
+import os
 # from pandarallel import pandarallel
 # pandarallel.initialize(progress_bar=True)
 
@@ -112,6 +114,22 @@ def csv2parquet(df:pd.DataFrame=None,
     print(f"Data has been converted and saved to {path_save_file}")
 
     return df
+
+def largecsv2parquet(df:pd.DataFrame=None, 
+                     path_largecsv_file:path=r"D:\temp_data\my2000_onedata_202501231426.csv", 
+                     chunk_size:int=1000000, 
+                     path_save_dir:path=r"D:\temp_data"):
+    chunks = pd.read_csv(path_largecsv_file, chunksize=chunk_size)
+    first_chunk = True  # 标记是否是第一个块
+    file_count = 0
+    for chunk in chunks:
+        # 转换为 PyArrow 的表格格式
+        table = pa.Table.from_pandas(chunk)
+
+        output_file = os.path.join(path_save_dir, f"my2000_onedata_202501231426_{file_count}.parquet")
+        pq.write_table(table, output_file)
+        file_count += 1
+        print(f"保存文件 {output_file}")
 
 def rename_columns_in_parquet_and_save(df:pd.DataFrame=None, 
                             dict_column_mapping:dict=DICT_COLUMN_MAPPING, 
@@ -350,7 +368,11 @@ def label_situations(df: pd.DataFrame,
         limited_pitch_level2,
         limited_pitch_level3,
     ]
-    limited_pitch_choices = [0, 1, 2, 3]
+    limited_pitch_choices = [0, # No limite
+                             1, # Limite 
+                             2, # Half limite
+                             3  # 1/4 limite
+                             ]
     df['label_condiction_limited'] = np.select(
         limited_pitch_condictions,
         limited_pitch_choices,
@@ -385,22 +407,42 @@ def label_operation(df: pd.DataFrame) -> pd.Series:
         382.5,
         22.5
     )
-    # 根据区间边界创建标签。例如，(0, 22.5)、(22.5, 45) 等。
-    wdb_label = [
-        f'({wdb[i]}, {wdb[i+1]})'
-        for i in range(len(wdb)-1)
-    ]
+    ## 根据区间边界创建标签。例如，(0, 22.5)、(22.5, 45) 等。
+    # wdb_label = [
+    #     f'({wdb[i]}, {wdb[i+1]})'
+    #     for i in range(len(wdb)-1)
+    # ]
+    # Using int inplace real bin like (0, 22.5)、(22.5, 45)
+    wdb_label = [i for i in range(16)]
     # 使用 pd.cut 函数将 'winddirection_avg' 列的数据划分到上述区间，并赋予相应的标签。
     df['label_wdb'] = pd.cut(
         df['winddirection_avg'],
         bins=wdb,
         labels=wdb_label,
         right=True,
-        include_lowest=False,
+        include_lowest=False
     )
     
+    npb = np.arrage(
+        0, 
+        382.5, 
+        22.5
+    )
+    # npb_label = [
+    #     f'({npb[i]}, {npb[i+1]})'
+    #     for i in range(len(npb)-1)
+    # ]
+    npb_label = [i for i in range(16)]
+    df['label_npb'] = pd.cut(
+        df['yawposition_avg'], 
+        bins=npb, 
+        labels=npb_label, 
+        right=True, 
+        include_lowest=False
+    )
+
     # 返回新生成的风向分类标签列
-    return df['label_wdb']
+    return df
 
 
 def integrity_validation(
@@ -410,7 +452,7 @@ def integrity_validation(
     validation_windspeedmin: float = 2.25,
     validation_wholecumtime: float = 180.0 * 60.0 * 60.0,
     validation_bincumtime: float = 0.5 * 60.0 * 60.0,
-) -> tuple[pd.DataFrame, dict]:
+) -> pd.DataFrame:
     """
     验证数据完整性，包括风速分箱和累计时间检查。
 
@@ -448,8 +490,9 @@ def integrity_validation(
         include_lowest=False,
     )
     
-    # 计算每个风机的累计时间，并与设定的最小累计时间进行比较。
-    wholecumtime = df.groupby('turbine_id')['time_diff'].sum()
+    df['time_interval'] = df.groupby('turbine_id')['time'].transform(lambda x: (x - x.shift()).fillna(pd.Timedelta(seconds=0)))
+    # 计算每个机组的累计时间，并与设定的最小累计时间进行比较。
+    wholecumtime = df.groupby('turbine_id')['time_interval'].sum()
     validation_wholecumtime = pd.Timedelta(seconds=validation_wholecumtime)
     condiction_wholecumtime = wholecumtime >= validation_wholecumtime
     wholecumtime_satisfy_idlist = wholecumtime[condiction_wholecumtime].index.tolist()
@@ -460,28 +503,34 @@ def integrity_validation(
     # 记录不满足累计时间条件的风机数据。
     integrity_problem_dict['whole'] = df[~df['turbine_id'].isin(wholecumtime_satisfy_idlist)]
     
-    if integrity_problem_dict['whole'].empty:
-        print("Whole integrity validation pass.")
+    # if integrity_problem_dict['whole'].empty:
+    #     print("Whole integrity validation pass.")
     
     # 计算满足条件的风机数据的风速分箱累计时间，并与设定的最小累计时间进行比较。
-    bincumtime = df_wholecumtime_satisfy.groupby(['turbine_id', 'label_windspeedbin'], observed=True)['time_diff'].sum()
+    bincumtime = df_wholecumtime_satisfy.groupby(['turbine_id', 'label_windspeedbin'], observed=True)['time_interval'].sum()
     validation_bincumtime = pd.Timedelta(seconds=validation_bincumtime)
     condiction_bincumtime = bincumtime >= validation_bincumtime
     # bincumtime_notsatisfy_indexlist = bincumtime[~condiction_bincumtime].index.tolist()
     bincumtime_satisfy_idlist = bincumtime[condiction_bincumtime].index.get_level_values(0).tolist()
     
-    # 筛选出风速分箱累计时间满足条件的风机数据。
+    ## 筛选出风速分箱累计时间满足条件的风机数据。
     df_wholebincumtime_satisfy = df_wholecumtime_satisfy[df_wholecumtime_satisfy['turbine_id'].isin(bincumtime_satisfy_idlist)]
     
     # 记录不满足风速分箱累计时间条件的风机数据。
     integrity_problem_dict['bin'] = df[~df['turbine_id'].isin(bincumtime_satisfy_idlist)]
     
-    if integrity_problem_dict['whole'].empty:
-        print("Bin integrity validation pass.")
-    
+    # 新增一列'label_integirity_validation'，标记出现的'turbine_id'为0，未出现的为1
+    df['label_integirity_validation'] = np.where(df['turbine_id'].isin(wholecumtime_satisfy_idlist), 0, 1)
+
+    df.drop(columns=['label_windspeedbin', 'time_interval'], inplace=True)
+    # this line might be not necessary, make sure all types convert to pyarrow types
+    df = pa.Table.from_pandas(df)
+    df = df.to_pandas(types_mapper=pd.ArrowDtype)
+
     # 输出完整性问题字典，并返回满足条件的数据及问题字典。
     print(integrity_problem_dict)
-    return df_wholebincumtime_satisfy, integrity_problem_dict
+
+    return df
 
 def windspeed_normalized_byairdensity(
     df: pd.DataFrame,
@@ -504,26 +553,26 @@ def windspeed_normalized_byairdensity(
         tuple[pd.Series, pd.Series]: 包含计算得到的空气密度和归一化风速的 Series。
     """
     
-    def airdensity_compute(T_10min_C: float) -> float:
+    # def airdensity_compute(T_10min_C: float) -> float:
 
-        # 空气温度转换为开尔文温度。
-        # T_10min_K = T_10min_C + 273.15
-        # Pw = 0.0000205 * np.exp(0.0631846 * T_10min_K)
-        # 计算空气密度（使用公式：ρ = (P0 / (R0 * T)) - φ * (Pw / (Rw * T)))
-        rho_10min = (1 / (T_10min_C + 273.15)) * (B_10min / R0 - phi * 0.0000205 * np.exp(0.0631846 * (T_10min_C + 273.15)) * (1 / R0 - 1 / Rw))
+    #     # 空气温度转换为开尔文温度。
+    #     # T_10min_K = T_10min_C + 273.15
+    #     # Pw = 0.0000205 * np.exp(0.0631846 * T_10min_K)
+    #     # 计算空气密度（使用公式：ρ = (P0 / (R0 * T)) - φ * (Pw / (Rw * T)))
+    #     rho_10min = (1 / (T_10min_C + 273.15)) * (B_10min / R0 - phi * 0.0000205 * np.exp(0.0631846 * (T_10min_C + 273.15)) * (1 / R0 - 1 / Rw))
     
-        return rho_10min
+    #     return rho_10min
     
-    # 标准空气密度（海平面标准大气）
-    rho0 = 1.225
+    # # 标准空气密度（海平面标准大气）
+    # rho0 = 1.225
     
-    # 使用 transform 函数应用 airdensity_compute 函数计算每个记录的空气密度
-    df['air_density_bycompute'] = df['airtemperature_avg'].transform(airdensity_compute)
+    # # 使用 transform 函数应用 airdensity_compute 函数计算每个记录的空气密度
+    # df['air_density_bycompute'] = df['airtemperature_avg'].transform(airdensity_compute)
     
     # 计算归一化风速，使用公式：Vn = Va * (ρ/ρ0)^(1/3)
-    df['normalized_windspeed_byairdensity'] = df['windspeed_avg'] * ((df['air_density_bycompute']/rho0) ** (1/3))
+    df['normalized_windspeed_byairdensity'] = df['windspeed_avg'] * ((df['airdensity_avg']/rho0) ** (1/3))
     
-    return df['air_density_bycompute'], df['normalized_windspeed_byairdensity']
+    return df
 
 def power_curve_compute(
     df: pd.DataFrame,
