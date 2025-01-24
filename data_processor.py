@@ -4,15 +4,15 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.csv as pv_csv
 import pyarrow.parquet as pq
-import pathlib as path
+from pathlib import Path
 import os
 # from pandarallel import pandarallel
 # pandarallel.initialize(progress_bar=True)
 
 # Vars
 # File Path
-PATH_CSV_FILE = r"C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).csv"
-PATH_PARQUET_FILE = r"C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).parquet"
+PATH_CSV_FILE = Path(r'C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).csv')
+PATH_PARQUET_FILE = Path(r'C:\Users\EDY\Desktop\PROJECT\PI\cloudsail\database\aggregated_database\aggregated_data_60s(test_51turbines_ori).parquet')
 # Column mapping, should be depand on original data columns
 DICT_COLUMN_MAPPING = {
     'rectime': 'time',  # imoprtant var, change it necessary
@@ -85,8 +85,9 @@ RATED_POWER = 2100
 # ]
 
 def csv2parquet(df:pd.DataFrame=None, 
-                path_csv_file:path=PATH_CSV_FILE, 
-                path_save_file:path=PATH_PARQUET_FILE
+                column_time:int=COLUMN_TIME, 
+                path_csv_file:Path=PATH_CSV_FILE, 
+                path_save_file:Path=PATH_PARQUET_FILE
                 ) -> pd.DataFrame: 
     """
     Read .csv data and covert to .parques data
@@ -104,8 +105,8 @@ def csv2parquet(df:pd.DataFrame=None,
         df = pd.read_csv(path_csv_file)
     print(df.dtypes)
 
-    if not pd.api.types.is_datetime64_any_dtype(df[COLUMN_TIME]):
-        df[COLUMN_TIME] = pd.to_datetime(df[COLUMN_TIME])
+    if not pd.api.types.is_datetime64_any_dtype(df[column_time]):
+        df[column_time] = pd.to_datetime(df[column_time])
 
     df = pa.Table.from_pandas(df)
     df = df.to_pandas(types_mapper=pd.ArrowDtype) 
@@ -115,25 +116,62 @@ def csv2parquet(df:pd.DataFrame=None,
 
     return df
 
-def largecsv2parquet(df:pd.DataFrame=None, 
-                     path_largecsv_file:path=r"D:\temp_data\my2000_onedata_202501231426.csv", 
+def largecsv2multiparquet(df:pd.DataFrame=None, 
+                     column_time:str='rectime', 
+                     path_largecsv_file:Path=Path(r"D:\temp_data\my2000_onedata_202501231426.csv"), 
                      chunk_size:int=1000000, 
-                     path_save_dir:path=r"D:\temp_data"):
+                     path_save_dir:Path=Path(r"D:\temp_data")):
     chunks = pd.read_csv(path_largecsv_file, chunksize=chunk_size)
-    first_chunk = True  # 标记是否是第一个块
     file_count = 0
     for chunk in chunks:
-        # 转换为 PyArrow 的表格格式
+
+        if not pd.api.types.is_datetime64_any_dtype(chunk[column_time]):
+            chunk[column_time] = pd.to_datetime(chunk[column_time])
+
         table = pa.Table.from_pandas(chunk)
+        df = table.to_pandas(types_mapper=pd.ArrowDtype)
 
         output_file = os.path.join(path_save_dir, f"my2000_onedata_202501231426_{file_count}.parquet")
-        pq.write_table(table, output_file)
+        df.to_parquet(output_file)
         file_count += 1
-        print(f"保存文件 {output_file}")
+        print(f"Saving file {output_file}")
+
+def multiparquet2largeparquet(df:pd.DataFrame=None, 
+                               list_path_parquet:list=[Path(f'D:\\temp_data\\my2000_onedata_202501231426_{i}.parquet') for i in range(14)], 
+                               path_save_dir:Path=Path(r'D:\temp_data')):
+    """
+    Merge multiple parquet files into a single DataFrame and save it to the specified directory.
+
+    Args:
+        df (pd.DataFrame, optional): DataFrame to merge. Defaults to None.
+        list_path_parquet (list, optional): List of parquet file paths to merge. Defaults to predefined paths.
+        path_save_dir (Path, optional): Directory to save the merged DataFrame. Defaults to D:\temp_data.
+
+    Returns:
+        pd.DataFrame: Merged DataFrame.
+    """
+    # Initialize an empty list to hold DataFrames
+    df_list = []
+
+    # Loop through the list of parquet file paths
+    for path in list_path_parquet:
+        # Read each parquet file and append to the list
+        df_chunk = pd.read_parquet(path)
+        df_list.append(df_chunk)
+
+    # Concatenate all DataFrames in the list into a single DataFrame
+    merged_df = pd.concat(df_list, ignore_index=True)
+
+    # Save the merged DataFrame to a new parquet file
+    merged_file_path = os.path.join(path_save_dir, 'merged_data.parquet')
+    merged_df.to_parquet(merged_file_path)
+    print(f"Merged data has been saved to {merged_file_path}")
+
+    return merged_df
 
 def rename_columns_in_parquet_and_save(df:pd.DataFrame=None, 
                             dict_column_mapping:dict=DICT_COLUMN_MAPPING, 
-                            path_save_file:path=PATH_PARQUET_FILE
+                            path_save_file:Path=PATH_PARQUET_FILE
                             ) -> pd.DataFrame:
     """
     Rename columns by inputs columns name mapper dict or default
@@ -160,7 +198,7 @@ def rename_columns_in_parquet_and_save(df:pd.DataFrame=None,
 def sort_values_and_save(df:pd.DataFrame=None, 
                          list_sort_column:list=['turbine_id', 'time'], 
                          ascending:bool=True, 
-                         path_save_file:path=PATH_PARQUET_FILE
+                         path_save_file:Path=PATH_PARQUET_FILE
                          ) -> pd.DataFrame:
     """
     Sort values and save data
